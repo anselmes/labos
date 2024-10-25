@@ -1,0 +1,4 @@
+#cloud-config
+instance-id: labos
+local-hostname: labos
+cloud-name: nocloud
