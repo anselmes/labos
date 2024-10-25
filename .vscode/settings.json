@@ -26,10 +26,7 @@
   "git.enableSmartCommit": true,
   "git.timeline.showUncommitted": true,
   "git.alwaysSignOff": true,
-  "git.branchProtection": [
-    "main",
-    "master"
-  ],
+  "git.branchProtection": ["main", "master"],
   "git.autoStash": true,
   "git.pruneOnFetch": true,
   "git.rebaseWhenSync": true,
@@ -53,5 +50,8 @@
   "rust-analyzer.server.extraEnv": {
     "CARGO_HOME": "/usr/local/rust/cargo",
     "RUSTUP_HOME": "/usr/local/rust/rustup"
+  },
+  "yaml.schemas": {
+    "https://json.schemastore.org/yamllint.json": "*.yaml"
   }
 }

@@ -1,0 +1,6 @@
+#cloud-config
+runcmd:
+  - curl -sSLf https://get.k0s.sh | sh
+  - mkdir -p /var/lib/k0s/manifests/crds
+  - k0s kubectl kustomize https://github.com/kubernetes-csi/external-snapshotter/client/config/crd?master > /var/lib/k0s/manifests/crds/external-snapshotter.yaml
+  - k0s kubectl kustomize https://github.com/kubernetes-sigs/gateway-api/config/crd/experimental?main > /var/lib/k0s/manifests/crds/gateway-api.yaml
