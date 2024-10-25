@@ -1,0 +1,16 @@
+---
+apiVersion: k0sctl.k0sproject.io/v1beta1
+kind: Cluster
+metadata:
+  name: labos
+spec:
+  hosts:
+    - role: controller+worker
+      noTaints: true
+      ssh:
+        address: 127.0.0.1
+        keyPath: ~/.ssh/id_ed25519
+        port: 22
+        user: ubuntu
+  k0s:
+    config: {}

@@ -1,0 +1,24 @@
+apiVersion: k0s.k0sproject.io/v1beta1
+kind: Cluster
+metadata:
+  name: labos
+spec:
+  extensions:
+    helm:
+      charts:
+        - name: cilium
+          chartname: cilium/cilium
+          namespace: kube-system
+          order: 1
+          version: 1.16.3
+          values: |
+            kubeProxyReplacement: true
+            bgpControlPlane:
+              enabled: true
+            gatewayAPI:
+              enabled: true
+            operator:
+              replicas: 1
+      repositories:
+        - name: cilium
+          url: https://helm.cilium.io/
