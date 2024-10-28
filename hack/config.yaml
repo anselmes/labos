@@ -7,11 +7,38 @@ spec:
   api:
     sans:
       - kubernetes.labos.local
+    extraArgs:
+      admission-control-config-file: /etc/admission.yaml
+      # oidc-issuer-url: <issuer-url>
+      # oidc-client-id: <client-id>
+      # oidc-username-claim: email # we use email token claim field as a username
   network:
     provider: custom
+    # podCIDR: 10.244.0.0/16
+    # serviceCIDR: 10.96.0.0/12
+    # dualStack:
+    #   enabled: false
+    #   IPv6podCIDR: fd00::/108
+    #   IPv6serviceCIDR: fd01::/108
+    # controlPlaneLoadBalancing:
+    #   enabled: false
+    #   type: Keepalived
+    #   keepalived:
+    #     vrrpInstances: []
+    #     # - virtualIPs: ["192.168.122.200/24"]
+    #     #   authPass: Example
+    #     virtualServers: []
+    #     # - ipAddress: "<External ip address>"
+    # nodeLocalLoadBalancing:
+    #   enabled: false
+    #   type: EnvoyProxy
   featureGates:
+    - name: KubeletInUserNamespace
+      enabled: true
     - name: UserNamespacesSupport
       enabled: true
+    - name: UserNamespacesPodSecurityStandards
+      enabled: false
   extensions:
     helm:
       charts:
@@ -21,8 +48,6 @@ spec:
           order: 1
           version: 1.16.2
           values: |
-            l2announcements:
-              enabled: true
             gatewayAPI:
               enabled: true
             operator:
@@ -47,21 +72,53 @@ spec:
           values: |
             crds:
               enabled: true
-        - name: flux
-          chartname: oci://registry-1.docker.io/bitnamicharts/flux
-          namespace: cicd
+        - name: capi-operator
+          chartname: oci://registry-1.docker.io/sanselmechart/capi-operator
+          namespace: operators
           order: 3
-          version: 2.3.20
+          version: 0.13.0
           values: |
-            global:
-              storageClass: openebs-hostpath
-              persistence:
-                enabled: true
+            replicaCount: 1
+            resources:
+              manager:
+                limits: {}
+                requests: {}
+        - name: capi-provider
+          chartname: oci://registry-1.docker.io/sanselmechart/capi-provider
+          namespace: ucp
+          order: 4
+          version: 0.1.1
+          values: |
+            bootstrap: k0sproject-k0smotron:v1.1.2
+            controlPlane: k0sproject-k0smotron:v1.1.2
+            core: cluster-api:v1.8.3
+            infrastructure: docker:v1.8.3;k0sproject-k0smotron:v1.1.2
+            manager:
+              featureGates:
+                core:
+                  ClusterTopology: true
+                  MachinePool: true
+                docker:
+                  ClusterTopology: true
+                  MachinePool: true
+        - name: capi-cluster-class
+          chartname: oci://registry-1.docker.io/sanselmechart/capi-cluster-class
+          namespace: sre
+          order: 6
+          version: 0.1.8
+          values: |
+            kubeadm:
+              enabled: false
+            k0s:
+              enabled: true
+              args:
+                - --no-taints
+                - --enable-worker
+            docker:
+              enabled: true
       repositories:
         - name: cilium
           url: https://helm.cilium.io/
-        - name: grafana
-          url: https://grafana.github.io/helm-charts/
         - name: jetstack
           url: https://charts.jetstack.io/
         - name: openebs
