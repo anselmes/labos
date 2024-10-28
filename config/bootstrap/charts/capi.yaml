@@ -1,0 +1,52 @@
+apiVersion: k0s.k0sproject.io/v1beta1
+kind: Cluster
+metadata:
+  name: labos
+spec:
+  extensions:
+    helm:
+      charts:
+        - name: capi-operator
+          chartname: oci://registry-1.docker.io/sanselmechart/capi-operator
+          namespace: operators
+          order: 4
+          version: 0.13.0
+          values: |
+            replicaCount: 1
+            resources:
+              manager:
+                limits: {}
+                requests: {}
+        - name: capi-provider
+          chartname: oci://registry-1.docker.io/sanselmechart/capi-provider
+          namespace: ucp
+          order: 5
+          version: 0.1.1
+          values: |
+            bootstrap: k0sproject-k0smotron:v1.1.2
+            controlPlane: k0sproject-k0smotron:v1.1.2
+            core: cluster-api:v1.8.3
+            infrastructure: docker:v1.8.3;k0sproject-k0smotron:v1.1.2
+            manager:
+              featureGates:
+                core:
+                  ClusterTopology: true
+                  MachinePool: true
+                docker:
+                  ClusterTopology: true
+                  MachinePool: true
+        - name: capi-cluster-class
+          chartname: oci://registry-1.docker.io/sanselmechart/capi-cluster-class
+          namespace: sre
+          order: 6
+          version: 0.1.8
+          values: |
+            kubeadm:
+              enabled: false
+            k0s:
+              enabled: true
+              args:
+                - --no-taints
+                - --enable-worker
+            docker:
+              enabled: true

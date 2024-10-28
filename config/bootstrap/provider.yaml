@@ -1,0 +1,10 @@
+---
+apiVersion: k0sctl.k0sproject.io/v1beta1
+kind: Cluster
+metadata:
+  name: labos
+spec:
+  hosts:
+    - installFlags:
+        - --enable-cloud-provider
+        - --kubelet-extra-args="--cloud-provider=external"
