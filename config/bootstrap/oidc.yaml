@@ -1,0 +1,10 @@
+apiVersion: k0s.k0sproject.io/v1beta1
+kind: Cluster
+metadata:
+  name: labos
+spec:
+  api:
+    extraArgs:
+      oidc-issuer-url: <issuer-url>
+      oidc-client-id: <client-id>
+      oidc-username-claim: email # we use email token claim field as a username

@@ -1,0 +1,22 @@
+apiVersion: k0s.k0sproject.io/v1beta1
+kind: Cluster
+metadata:
+  name: labos
+spec:
+  extensions:
+    helm:
+      charts:
+        - name: openebs
+          chartname: openebs/openebs
+          namespace: kube-system
+          order: 2
+          version: 3.10.0
+          values: |
+            analytics:
+              enabled: false
+            localprovisioner:
+              hostpathClass:
+                isDefaultClass: true
+      repositories:
+        - name: openebs
+          url: https://openebs.github.io/charts/

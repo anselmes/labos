@@ -1,0 +1,24 @@
+apiVersion: k0s.k0sproject.io/v1beta1
+kind: Cluster
+metadata:
+  name: labos
+spec:
+  network:
+    podCIDR: 10.244.0.0/16
+    serviceCIDR: 10.96.0.0/12
+    dualStack:
+      enabled: false
+      IPv6podCIDR: fd00::/108
+      IPv6serviceCIDR: fd01::/108
+    controlPlaneLoadBalancing:
+      enabled: false
+      type: Keepalived
+      keepalived:
+        vrrpInstances: []
+        # - virtualIPs: ["192.168.122.200/24"]
+        #   authPass: Example
+        virtualServers: []
+        # - ipAddress: "<External ip address>"
+    nodeLocalLoadBalancing:
+      enabled: false
+      type: EnvoyProxy
