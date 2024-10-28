@@ -1,0 +1,10 @@
+#cloud-config
+packages:
+  - apparmor
+  - ca-certificates
+  - conntrack
+  - curl
+  - gnupg
+  - libseccomp2
+  # - ipvsadm
+  # - python3-rbd
