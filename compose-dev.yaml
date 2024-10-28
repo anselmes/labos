@@ -1,14 +1,24 @@
 ---
 services:
+  # vyos:
+  #   image: sanselme/vyos:1.5
+  #   platform: linux/amd64
+  #   command: /sbin/init
+  #   privileged: true
+  #   stdin_open: true
+  #   tty: true
+  #   networks:
+  #     default:
+  #     labos:
   labos:
-    image: ghcr.io/anselmes/devos:main
+    image: ghcr.io/anselmes/devcontainer:24.04
     privileged: true
     stdin_open: true
     tty: true
     user: root # note: required for /sbin/init
     working_dir: /home/devos/workspace
-    # env_file:
-    #   - .env
+    env_file:
+      - .env
     volumes:
       - .:/home/devos/workspace
       - ~/.gitconfig:/home/devos/.gitconfig:ro
@@ -21,3 +31,8 @@ services:
       - 10443:443
       - 15900:5900
       - 16443:6443
+    networks:
+      default:
+      labos:
+networks:
+  labos: {}
