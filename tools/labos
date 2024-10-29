@@ -1,0 +1,358 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0
+
+set -eo pipefail
+
+[[ ${DEBUG} -eq 1 ]] && set -x
+
+: "${ARCH:="$(uname -m)"}"
+: "${DIR:="$(dirname "$(realpath "$(dirname "$0")")")"}"
+: "${IMG_DIR:="/var/lib/libvirt/images"}"
+: "${IMG_FILE:="${IMG_DIR}/noble.img"}"
+
+[[ "aarch64" == "${ARCH}" ]] && ARCH="arm64"
+[[ "x86_64" == "${ARCH}" ]] && ARCH="amd64"
+
+# todo: load from vault
+load_from_vault() {
+  echo "loading from vault"
+}
+
+# todo: save to vault
+save_to_vault() {
+  echo "saving to vault"
+}
+
+generate_netplan() {
+  MACADDR="${1}"
+  [[ -z "${MACADDR}" ]] && echo "mac address is required" && exit 1
+  yq ".network.ethernets.oam.match.macaddress = \"${MACADDR}\"" "${DIR}/config/netplan/default.yaml"
+}
+
+generate_iso_image() {
+  ISOCMD="genisoimage"
+  if [[ -z $(command -v ${ISOCMD}) ]]; then
+    ISOCMD="mkisofs"
+    if [[ -z $(command -v ${ISOCMD}) ]]; then
+      echo "genisoimage nor mkisofs found"
+      exit 1
+    fi
+  fi
+
+  ${ISOCMD} -joliet -rock -output "${1}" -volid cidata "${@:2}"
+}
+
+print_help() {
+  echo """
+Commands:
+  init        Generate site configs
+  bootstrap   Create & configure VMs
+  apply       Create & deploy site
+  cleanup     Run cleanup tasks
+
+Other Commands:
+  version   Show version information
+
+Usage:
+  ${0} [flags] [options]
+
+Use \"${0} options\" for a list of global options (applies to all commands).
+  """
+}
+
+print_options() {
+  echo """
+The following option can be passed to any command:
+
+  --name <name>             Site name
+  --ssh-pubkey <file>       SSH public key file
+  --user-data <file>        cloud-init user data file
+  --vault <vault>           vault type (icloud | vault)
+  """
+}
+
+while [[ $# -gt 0 ]]; do
+  case "${1}" in
+    -h|--help|help)
+      print_help
+      exit 0
+      ;;
+    --name)
+      [[ -z "${2}" ]] && echo "name is required" && exit 1
+      export SITE_NAME="${2}"
+      shift 2
+      ;;
+    --ssh-pubkey)
+      [[ -z "${2}" ]] && echo "ssh pubkey file is required" && exit 1
+      export SSH_PUBKEY_FILE="${2}"
+      shift 2
+      ;;
+    --user-data)
+      [[ -z "${2}" ]] && echo "userdata file is required" && exit 1
+      export USERDATA_FILE="${2}"
+      shift 2
+      ;;
+    --vault)
+      [[ -z "${2}" ]] && echo "vault is required" && exit 1
+      [[ "${2}" != "icloud" && "${2}" != "vault" ]] && echo "invalid vault" && exit 1
+      export VAULT="${2}"
+      shift 2
+      ;;
+    *)
+      CMD="${1}"
+      ARGS+=${*:2}
+      [[ -z "${SITE_NAME}" ]] && export SITE_NAME="skiff"
+      SITE_DIR="${DIR}/build/site/${SITE_NAME}"
+      [[ -z "${SSH_PUBKEY_FILE}" ]] && export SSH_PUBKEY_FILE="${SITE_DIR}/id_ed25519.pub"
+      [[ -z "${USERDATA_FILE}" ]] && export USERDATA_FILE="${SITE_DIR}/user-data"
+      [[ -z "${VAULT}" ]] && export VAULT="icloud"
+      export SSH_KEY_FILE="$(echo ${SSH_PUBKEY_FILE} | cut -d '.' -f 1)"
+      export GNUPGHOME="${SITE_DIR}/.gnupg"
+      break
+      ;;
+  esac
+done
+
+if [[ "${ARGS}" == *"--help"* || "${ARGS}" == "-h" ]]; then
+  print_help
+  exit 0
+fi
+
+case "${CMD}" in
+  init)
+    case "${ARGS}" in
+      --load)
+        export LOAD_FROM_VAULT=true
+        ;;
+      --save)
+        export SAVE_TO_VAULT=true
+        ;;
+      *)
+        if [[ -n "${ARGS}" ]]; then
+          echo "invalid arguments"
+          echo "use --load or --save to load or save from vault"
+          exit 1
+        fi
+        ;;
+    esac
+
+    stat "${SITE_DIR}"> /dev/null 2>&1 || mkdir -p "${SITE_DIR}"
+
+    if [[ ${LOAD_FROM_VAULT} == true ]]; then
+      load_from_vault
+    else
+      # ssh config
+      stat "${SSH_KEY_FILE}" > /dev/null 2>&1 || ssh-keygen -N "" -C "${SITE_NAME}" -t ed25519 -f "${SSH_KEY_FILE}"
+
+      # gpg config
+      if ! gpg --homedir "${GNUPGHOME}" -k "${SITE_NAME}" > /dev/null 2>&1; then
+        cat <<eof > "${GNUPGHOME}/${SITE_NAME}.batch"
+%no-protection
+# %no-ask-passphrase
+Key-Type: RSA
+Key-Length: 4096
+Subkey-Type: 1
+Subkey-Length: 4096
+Expire-Date: 0
+Name-Real: "${SITE_NAME}"
+eof
+        gpg --no-tty --batch --homedir "${GNUPGHOME}" --gen-key "${GNUPGHOME}/${SITE_NAME}.batch"
+      fi
+      # PGP="$(gpg --homedir "${GNUPGHOME}" --list-keys "${SITE_NAME}" | head -n +2 | tail -n 1 | tr -d ' ')"
+      # echo "${PGP}"
+
+      # pki config
+      CA_KEY_FILE="${SITE_DIR}/ca.key"
+      CA_FILE="${SITE_DIR}/ca.crt"
+      stat "${CA_KEY_FILE}" > /dev/null 2>&1 || openssl genrsa -out "${CA_KEY_FILE}" 4096
+      if ! stat "${CA_FILE}" > /dev/null 2>&1; then
+        openssl req -new -key "${CA_KEY_FILE}" -out "${SITE_DIR}/ca.csr" -subj "/CN=${SITE_NAME}"
+        openssl x509 -req -days 365 -in "${SITE_DIR}/ca.csr" -signkey "${CA_KEY_FILE}" -out "${CA_FILE}"
+        openssl pkcs12 -export -out "${SITE_DIR}/ca.pfx" -inkey "${CA_KEY_FILE}" -in "${CA_FILE}" -passout pass:
+      fi
+    fi
+
+    [[ ${SAVE_TO_VAULT} == true ]] && save_to_vault
+
+    # generate cloud init
+    # export ADMISSION="$(sed '/#/d' ${DIR}/config/cloudinit/admission.yaml)"
+    export NETPLAN="$(sed '/#/d' ${DIR}/config/netplan/default.yaml)"
+    export PKG="$(sed '/#/d' ${DIR}/config/cloudinit/packages.yaml)"
+    export PUBKEY="$(cat ${SSH_PUBKEY_FILE})"
+    export CA="$(cat ${SITE_DIR}/ca.crt)"
+    export UUID="$(uuidgen)"
+    yq '
+      . *+ env(NETPLAN) |
+      .network.ethernets.oam.match.macaddress = "de:ad:be:ef:00:01"
+    ' "${DIR}/config/netplan/default.yaml" > "${SITE_DIR}/network-config"
+    yq '
+      # . *+ env(ADMISSION) |
+      . *+ env(PKG) |
+      .ssh_authorized_keys = [env(PUBKEY)] |
+      .ca_certs.trusted = [strenv(CA)]
+    ' "${DIR}/config/cloudinit/default.yaml" > "${USERDATA_FILE}"
+    yq '
+      .instance-id = env(UUID) |
+      .local-hostname = env(UUID)
+    ' "${DIR}/config/cloudinit/metadata.yaml" > "${SITE_DIR}/meta-data"
+
+    # generate k0s config
+    export CNI="$(cat ${DIR}/config/bootstrap/charts/cni.yaml)"
+    export CSI="$(cat ${DIR}/config/bootstrap/charts/csi.yaml)"
+    export CAPI="$(cat ${DIR}/config/bootstrap/charts/capi.yaml)"
+    export SANS="kubernetes.${SITE_NAME}.labos.local"
+    export CONFIG="$(yq '
+      . *+ env(CNI) |
+      . *+ env(CSI) |
+      . *+ env(CAPI)
+    ' ${DIR}/config/bootstrap/config.yaml)"
+
+    # generate k0sctl config
+    yq '
+      .spec.hosts[].ssh.keyPath = env(SSH_KEY_FILE) |
+      .spec.k0s.config = env(CONFIG)
+    ' "${DIR}/config/bootstrap/cluster.yaml" > "${SITE_DIR}/bootstrap.yaml"
+
+    # todo: configure route & dns
+    ;;
+  bootstrap)
+    # todo: check initialized
+    # todo: create gateway & nameserver
+
+    # todo: create harbor vm
+    VOL="${IMG_DIR}/${SITE_NAME}-harbor.img"
+    if ! grep -qa "${VOL}" <(sudo ls "${VOL}"); then
+      sudo qemu-img create -b "${IMG_FILE}" -f qcow2 -F qcow2 "${VOL}" 16G
+      qemu-img info "${VOL}"
+    fi
+
+    NAME="${SITE_NAME}-harbor"
+    OS="ubuntu20.04"
+    CPU="" #"host-passthrough"
+    MEM=8192
+    generate_iso_image "/tmp/${SITE_NAME}-cloudinit.iso" "${USERDATA_FILE}" "${SITE_DIR}/meta-data" "${SITE_DIR}/network-config"
+    sudo mv "/tmp/${SITE_NAME}-cloudinit.iso" /var/lib/libvirt/boot/
+    grep -q "${NAME}" <(sudo virsh list --all) || sudo virt-install \
+      --name "${NAME}" \
+      --os-variant "${OS}" \
+      --metadata name="${NAME}",uuid="$(uuidgen)" \
+      --boot menu=on \
+      --cpu "${CPU}" \
+      --memory "${MEM}" \
+      --memballoon model=virtio \
+      --rng /dev/urandom \
+      --tpm model=tpm-tis,version=2.0 \
+      --watchdog i6300esb,action=reset \
+      --channel unix,target_type=virtio,name=org.qemu.guest_agent.0 \
+      --channel unix,target_type=virtio,name=org.libguestfs.channel.0 \
+      --disk path="${VOL}",serial="$(uuidgen)" \
+      --disk "${IMG_DIR}/../boot/${SITE_NAME}-cloudinit.iso",device=cdrom \
+      --network none \
+      --qemu-commandline="-accel hvf" \
+      --qemu-commandline="-netdev vmnet-shared,id=sharednet1" \
+      --qemu-commandline="-device virtio-net-pci,id=net1,netdev=sharednet1,addr=0x3,mac=de:ad:be:ef:00:01" \
+      --graphics none \
+      --import \
+      --noautoconsole
+
+    sudo virsh list --all
+
+    # todo: create cruiser vms
+    ;;
+  apply)
+    # todo: check initialized and configured
+
+    # create management cluster (harbor)
+    export NAME="${SITE_NAME}-harbor"
+    export IPADDR="$(arp -i bridge100 -a | awk '/de:ad:be:ef:00:01/ { print $2 }' | tr -d '()')"
+    export SANS="${SITE_NAME}-harbor.kubernetes.${SITE_NAME}.labos.local"
+    export CONFIG="$(yq '
+      .spec.hosts[0].ssh.address = env(IPADDR) |
+      .metadata.name = env(NAME) |
+      .spec.k0s.config.metadata.name = env(NAME) |
+      .spec.k0s.config.spec.api.sans = [env(SANS)]
+    ' ${SITE_DIR}/bootstrap.yaml)"
+
+    ssh-keygen -R "${IPADDR}"
+
+    if [[ ${DEBUG} -eq 1 ]]; then
+      set -x
+      echo "${CONFIG}" | SSH_AUTH_SOCK="" k0sctl apply --debug --disable-telemetry --kubeconfig-out "${SITE_DIR}/kubeconfig-harbor.yaml" --config -
+    else
+      echo "${CONFIG}" | SSH_AUTH_SOCK="" k0sctl apply --disable-telemetry --kubeconfig-out "${SITE_DIR}/kubeconfig-harbor.yaml" --config -
+    fi
+
+    kustomize build "${DIR}/deployment/crd" | kubectl --kubeconfig "${SITE_DIR}/kubeconfig-harbor.yaml" apply -f -
+
+    # todo: bgp
+    # todo: edns
+    # todo: create workload cluster (cruiser)
+    ;;
+  # fixme: cleanup
+  cleanup)
+    case "${ARGS}" in
+      --all)
+        export FULL_CLEANUP=true
+        ;;
+      --harbor)
+        export CLEAN_HARBOR=true
+        ;;
+      *)
+        if [[ -n "${ARGS}" ]]; then
+          echo "invalid arguments"
+          echo "use --harbor to cleanup harbor resources also"
+          echo "use --all to cleanup all resources"
+          exit 1
+        fi
+        ;;
+    esac
+
+    NAME="${SITE_NAME}-harbor"
+
+    if [[ ${CLEAN_HARBOR} == true ]]; then
+      stat "${SITE_DIR}/kubeconfig-harbor.yaml" > /dev/null 2>&1 && k0sctl reset "${SITE_DIR}/kubeconfig-harbor.yaml" --config "${SITE_DIR}/bootstrap.yaml"
+      sudo virsh list --all | grep "${NAME}" | awk '{print $2}' && sudo virsh reset "${NAME}"
+    fi
+
+    if [[ ${FULL_CLEANUP} == true ]]; then
+      if grep -q "${NAME}" <(sudo virsh list --all); then
+        sudo virsh destroy "${NAME}"
+        sudo virsh dumpxml "${NAME}" | yq -p xml '.domain.os.nvram.+content' | xargs sudo rm -f -
+        sudo virsh undefine --remove-all-storage "${NAME}"
+      fi
+
+      rm -rf "${SITE_DIR}"
+    fi
+
+    sudo virsh list --all
+    ;;
+  options)
+    print_options
+    exit 0
+    ;;
+  version)
+    echo "${0} $(git describe --all)"
+    exit 0
+    ;;
+  *)
+    if [[ -n "${CMD}" ]]; then
+      echo "Command not found"
+      print_help
+      exit 1
+    fi
+    exit 0
+    ;;
+esac
+
+# debug: output
+if [[ ${DEBUG} -eq 1 ]]; then
+  echo """
+site:       ${SITE_NAME}
+
+command:    ${CMD}
+arguments:  ${ARGS}
+
+arch:       ${ARCH}
+workspace:  ${DIR}
+  """
+fi
