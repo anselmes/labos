@@ -1,0 +1,72 @@
+interfaces {
+    ethernet eth0 {
+        description wan
+    }
+    loopback lo {
+        address ${VYOS_OAM_IPV4_CIDR:-172.16.254.1/24}
+        address ${VYOS_OAM_IPV6_CIDR:-fd00::1/64}
+        description oam
+    }
+}
+nat {
+    source {
+        rule 100 {
+            outbound-interface eth0
+            translation {
+                address masquerade
+            }
+        }
+    }
+}
+pki {
+    ca vyos {
+        certificate ${VYOS_CA}
+        private {
+          key ${VYOS_CA_KEY}
+        }
+    }
+}
+protocols {
+    static {
+        route 0.0.0.0/0 {
+            dhcp-interface eth0
+        }
+    }
+}
+service {
+    https {
+        certificate {
+            ca-certificate vyos
+            certificate vyos-api
+        }
+        virtual-host lan {
+            allow-client {
+                address 0.0.0.0/0
+                address ::/0
+            }
+            listen-address ${VYOS_OAM_IPV4_ADDR:-172.16.254.1}
+            listen-address ${VYOS_OAM_IPV6_ADDR:-fd00::1}
+        }
+    }
+    lldp {
+        interface all {
+        }
+    }
+    ssh {
+        access-control {
+            allow {
+                user ${VYOS_USERNAME:-vyos}
+            }
+        }
+        disable-password-authentication
+        port 22
+    }
+}
+system {
+    domain-name ${SITE_DOMAIN_NAME:-labos.local}
+    domain-search {
+        domain ${SITE_DOMAIN_NAME:-labos.local}
+    }
+    host-name ${VYOS_HOSTNAME:-gw}
+    time-zone America/Toronto
+}

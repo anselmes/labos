@@ -1,0 +1,25 @@
+#cloud-config
+write_files:
+  - path: /config/config.boot.default
+    owner: root:vyattacfg
+    permissions: "0644"
+    content: null
+  - path: /usr/local/share/ca-certificates/ca.crt
+    owner: root:vyattacfg
+    permissions: "0644"
+    content: null
+  - path: /opt/vyatta/etc/config/scripts/vyos-postconfig-bootup.script
+    owner: root:vyattacfg
+    permissions: "0775"
+    content: |
+      #!/bin/vbash
+      source /opt/vyatta/etc/functions/script-template
+      load /config/config.boot.default
+      configure
+      run generate pki certificate sign vyos install vyos-api
+      commit
+      save
+      exit
+      FILENAME=/tmp/bgp_status_$(date +"%Y_%m_%d_%I_%M_%p").log
+      run show ip bgp summary >> ${FILENAME}
+      run show bgp ipv4 >> ${FILENAME}

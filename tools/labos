@@ -7,7 +7,8 @@ set -eo pipefail
 
 : "${ARCH:="$(uname -m)"}"
 : "${DIR:="$(dirname "$(realpath "$(dirname "$0")")")"}"
-: "${IMG_DIR:="/var/lib/libvirt/images"}"
+: "${LIBVIRT_DIR:="/var/lib/libvirt"}"
+: "${IMG_DIR:="${LIBVIRT_DIR}/images"}"
 : "${IMG_FILE:="${IMG_DIR}/noble.img"}"
 
 [[ "aarch64" == "${ARCH}" ]] && ARCH="arm64"
@@ -42,6 +43,78 @@ generate_iso_image() {
   ${ISOCMD} -joliet -rock -output "${1}" -volid cidata "${@:2}"
 }
 
+create_vol() {
+  NAME="${1}"
+  IMG_FILE="${2}"
+  [[ -z "${NAME}" ]] && echo "name is required" && exit 1
+  [[ -z "${IMG_FILE}" ]] && echo "image file is required" && exit 1
+
+  VOL="${IMG_DIR}/${NAME}.img"
+  if ! grep -qa "${VOL}" <(sudo ls "${VOL}"); then
+    sudo qemu-img create -b "${IMG_FILE}" -f qcow2 -F qcow2 "${VOL}" "${3:-16G}"
+    qemu-img info "${VOL}"
+  fi
+}
+
+create_vm() {
+  NAME="${1}"
+  OS="${2}"
+  CPU="${3}"
+  MEM="${4}"
+  METADATA_FILE="${5}"
+  USERDATA_FILE="${6}"
+  NETWORK_CONFIG="${7}"
+  IMG_FILE="${8}"
+
+  [[ -z "${NAME}" ]] && echo "name is required" && exit 1
+  [[ -z "${OS}" ]] && echo "os is required" && exit 1
+  [[ -z "${CPU}" ]] && echo "cpu not provided"
+  [[ -z "${MEM}" ]] && echo "memory is required" && exit
+  [[ -z "${METADATA_FILE}" ]] && echo "metadata file is required" && exit 1
+  [[ -z "${USERDATA_FILE}" ]] && echo "userdata file is required" && exit 1
+  [[ -z "${NETWORK_CONFIG}" ]] && echo "network config is required" && exit 1
+  [[ -z "${IMG_FILE}" ]] && echo "image file is required" && exit
+
+  stat -d "${IMG_DIR}" > /dev/null 2>&1 || sudo mkdir -p "${IMG_DIR}"
+  stat -d "${LIBVIRT_DIR}/boot" > /dev/null 2>&1 || sudo mkdir -p "${LIBVIRT_DIR}/boot"
+
+  create_vol "${NAME}" "${IMG_FILE}"
+  generate_iso_image "/tmp/${NAME}-cloudinit.iso" "${METADATA_FILE}" "${USERDATA_FILE}" "${NETWORK_CONFIG}"
+  sudo mv "/tmp/${NAME}-cloudinit.iso" "${LIBVIRT_DIR}/boot/"
+
+  grep -q "${NAME}" <(sudo virsh list --all) || sudo virt-install \
+    --name "${NAME}" \
+    --arch "${ARCH}" \
+    --os-variant "${OS}" \
+    --metadata name="${NAME}",uuid="$(uuidgen)" \
+    --boot menu=on \
+    --cpu "${CPU}" \
+    --memory "${MEM}" \
+    --memballoon model=virtio \
+    --rng /dev/urandom \
+    --tpm model=tpm-tis,version=2.0 \
+    --watchdog i6300esb,action=reset \
+    --channel unix,target_type=virtio,name=org.qemu.guest_agent.0 \
+    --channel unix,target_type=virtio,name=org.libguestfs.channel.0 \
+    --disk path="${VOL}",serial="$(uuidgen)" \
+    --disk "${LIBVIRT_DIR}/boot/${NAME}-cloudinit.iso",device=cdrom \
+    --network none \
+    --qemu-commandline="-accel hvf" \
+    --graphics none \
+    --import \
+    --noautoconsole "${@:9}"
+}
+
+delete_vm() {
+  NAME="${1}"
+  [[ -z "${NAME}" ]] && echo "name is required" && exit 1
+  if grep -q "${NAME}" <(sudo virsh list --all); then
+    sudo virsh destroy "${NAME}"
+    sudo virsh dumpxml "${NAME}" | yq -p xml '.domain.os.nvram.+content' | xargs sudo rm -f -
+    sudo virsh undefine --remove-all-storage "${NAME}"
+  fi
+}
+
 print_help() {
   echo """
 Commands:
@@ -68,6 +141,25 @@ The following option can be passed to any command:
   --ssh-pubkey <file>       SSH public key file
   --user-data <file>        cloud-init user data file
   --vault <vault>           vault type (icloud | vault)
+
+The following options can be passed to the \"init\" command:
+
+  --load                    Load from vault
+  --save                    Save to vault
+
+The following options can be passed to the \"bootstrap\" command:
+
+  --gw                      Bootstrap gateway & nameserver
+  --harbor                  Bootstrap harbor
+
+The following options can be passed to the \"cleanup\" command:
+
+  --all                     Cleanup all resources
+  --harbor                  Cleanup harbor resources
+
+Examples:
+  ${0} bootstrap --gw
+  ${0} cleanup --all
   """
 }
 
@@ -130,7 +222,7 @@ case "${CMD}" in
       *)
         if [[ -n "${ARGS}" ]]; then
           echo "invalid arguments"
-          echo "use --load or --save to load or save from vault"
+          print_options
           exit 1
         fi
         ;;
@@ -178,8 +270,8 @@ eof
     # export ADMISSION="$(sed '/#/d' ${DIR}/config/cloudinit/admission.yaml)"
     export NETPLAN="$(sed '/#/d' ${DIR}/config/netplan/default.yaml)"
     export PKG="$(sed '/#/d' ${DIR}/config/cloudinit/packages.yaml)"
-    export PUBKEY="$(cat ${SSH_PUBKEY_FILE})"
-    export CA="$(cat ${SITE_DIR}/ca.crt)"
+    export PUBKEY="${SSH_PUBKEY_FILE}"
+    export CA="${SITE_DIR}/ca.crt"
     export UUID="$(uuidgen)"
     yq '
       . *+ env(NETPLAN) |
@@ -188,8 +280,8 @@ eof
     yq '
       # . *+ env(ADMISSION) |
       . *+ env(PKG) |
-      .ssh_authorized_keys = [env(PUBKEY)] |
-      .ca_certs.trusted = [strenv(CA)]
+      .ssh_authorized_keys = [load(env(PUBKEY))] |
+      .ca_certs.trusted = [load(strenv(CA))]
     ' "${DIR}/config/cloudinit/default.yaml" > "${USERDATA_FILE}"
     yq '
       .instance-id = env(UUID) |
@@ -197,74 +289,101 @@ eof
     ' "${DIR}/config/cloudinit/metadata.yaml" > "${SITE_DIR}/meta-data"
 
     # generate k0s config
-    export CNI="$(cat ${DIR}/config/bootstrap/charts/cni.yaml)"
-    export CSI="$(cat ${DIR}/config/bootstrap/charts/csi.yaml)"
-    export CAPI="$(cat ${DIR}/config/bootstrap/charts/capi.yaml)"
+    export CNI="${DIR}/config/bootstrap/charts/cni.yaml"
+    export CSI="${DIR}/config/bootstrap/charts/csi.yaml"
+    export CAPI="${DIR}/config/bootstrap/charts/capi.yaml"
     export SANS="kubernetes.${SITE_NAME}.labos.local"
-    export CONFIG="$(yq '
-      . *+ env(CNI) |
-      . *+ env(CSI) |
-      . *+ env(CAPI)
+    export K0S_CONFIG="$(yq '
+      . *+ load(env(CNI)) |
+      . *+ load(env(CSI)) |
+      . *+ load(env(CAPI))
     ' ${DIR}/config/bootstrap/config.yaml)"
 
     # generate k0sctl config
     yq '
       .spec.hosts[].ssh.keyPath = env(SSH_KEY_FILE) |
-      .spec.k0s.config = env(CONFIG)
+      .spec.k0s.config = env(K0S_CONFIG)
     ' "${DIR}/config/bootstrap/cluster.yaml" > "${SITE_DIR}/bootstrap.yaml"
 
-    # todo: configure route & dns
+    # fixme: configure route & dns
+    export VYOS_CONFIG="${SITE_DIR}/vyos/config.boot.default"
+    mkdir -p "${SITE_DIR}/vyos"
+    touch "${SITE_DIR}/vyos/meta-data"
+    cp -f "${DIR}/config/vyos/network.yaml" "${SITE_DIR}/vyos/network-config"
+    cp -f "${DIR}/config/vyos/config.boot.default" "${VYOS_CONFIG}"
+    yq '
+      .write_files[0].content = load(strenv(VYOS_CONFIG))
+    ' "${DIR}/config/vyos/config.yaml" > "${SITE_DIR}/vyos/user-data"
     ;;
   bootstrap)
-    # todo: check initialized
-    # todo: create gateway & nameserver
+    case "${ARGS}" in
+      --gw)
+        export BOOTSTRAP_GW=true
+        ;;
+      --harbor)
+        export BOOTSTRAP_HARBOR=true
+        ;;
+      *)
+        if [[ -n "${ARGS}" ]]; then
+          echo "invalid arguments"
+          print_options
+          exit 1
+        fi
+        ;;
+    esac
 
-    # todo: create harbor vm
-    VOL="${IMG_DIR}/${SITE_NAME}-harbor.img"
-    if ! grep -qa "${VOL}" <(sudo ls "${VOL}"); then
-      sudo qemu-img create -b "${IMG_FILE}" -f qcow2 -F qcow2 "${VOL}" 16G
-      qemu-img info "${VOL}"
+    # todo: check initialized
+
+    # create gateway & nameserver
+    if [[ ${BOOTSTRAP_GW} == true ]]; then
+      NAME="${SITE_NAME}-gw"
+      OS="debian10"
+      CPU=""
+      MEM=4196
+      IMG_FILE="${IMG_DIR}/vyos.img"
+      ARCH="x86_64" create_vm \
+        "${NAME}" \
+        "${OS}" \
+        "${CPU}" \
+        "${MEM}" \
+        "${SITE_DIR}/vyos/meta-data" \
+        "${SITE_DIR}/vyos/user-data" \
+        "${SITE_DIR}/vyos/network-config" \
+        "${IMG_FILE}" \
+        --qemu-commandline="-netdev vmnet-bridged,id=bridgednet1,ifname=${BRIDGE_IF}" \
+        --qemu-commandline="-device virtio-net-pci,id=net2,netdev=bridgednet1,addr=0x3,mac=de:ad:be:ef:00:00" \
+        --qemu-commandline="-netdev vmnet-shared,id=sharednet1" \
+        --qemu-commandline="-device virtio-net-pci,id=net1,netdev=sharednet1,addr=0x4,mac=de:ad:be:ef:00:01"
     fi
 
-    NAME="${SITE_NAME}-harbor"
-    OS="ubuntu20.04"
-    CPU="" #"host-passthrough"
-    MEM=8192
-    generate_iso_image "/tmp/${SITE_NAME}-cloudinit.iso" "${USERDATA_FILE}" "${SITE_DIR}/meta-data" "${SITE_DIR}/network-config"
-    sudo mv "/tmp/${SITE_NAME}-cloudinit.iso" /var/lib/libvirt/boot/
-    grep -q "${NAME}" <(sudo virsh list --all) || sudo virt-install \
-      --name "${NAME}" \
-      --os-variant "${OS}" \
-      --metadata name="${NAME}",uuid="$(uuidgen)" \
-      --boot menu=on \
-      --cpu "${CPU}" \
-      --memory "${MEM}" \
-      --memballoon model=virtio \
-      --rng /dev/urandom \
-      --tpm model=tpm-tis,version=2.0 \
-      --watchdog i6300esb,action=reset \
-      --channel unix,target_type=virtio,name=org.qemu.guest_agent.0 \
-      --channel unix,target_type=virtio,name=org.libguestfs.channel.0 \
-      --disk path="${VOL}",serial="$(uuidgen)" \
-      --disk "${IMG_DIR}/../boot/${SITE_NAME}-cloudinit.iso",device=cdrom \
-      --network none \
-      --qemu-commandline="-accel hvf" \
-      --qemu-commandline="-netdev vmnet-shared,id=sharednet1" \
-      --qemu-commandline="-device virtio-net-pci,id=net1,netdev=sharednet1,addr=0x3,mac=de:ad:be:ef:00:01" \
-      --graphics none \
-      --import \
-      --noautoconsole
-
-    sudo virsh list --all
+    # create harbor vm
+    if [[ ${BOOTSTRAP_HARBOR} == true ]]; then
+      NAME="${SITE_NAME}-harbor"
+      OS="ubuntu20.04"
+      CPU=""
+      MEM=8192
+      create_vm \
+        "${NAME}" \
+        "${OS}" \
+        "${CPU}" \
+        "${MEM}" \
+        "${SITE_DIR}/meta-data" \
+        "${USERDATA_FILE}" \
+        "${SITE_DIR}/network-config" \
+        "${IMG_FILE}" \
+        --qemu-commandline="-netdev vmnet-shared,id=sharednet1" \
+        --qemu-commandline="-device virtio-net-pci,id=net1,netdev=sharednet1,addr=0x4,mac=de:ad:be:ef:01:00"
+    fi
 
     # todo: create cruiser vms
+    sudo virsh list --all
     ;;
   apply)
     # todo: check initialized and configured
 
     # create management cluster (harbor)
     export NAME="${SITE_NAME}-harbor"
-    export IPADDR="$(arp -i bridge100 -a | awk '/de:ad:be:ef:00:01/ { print $2 }' | tr -d '()')"
+    export IPADDR="$(arp -i bridge100 -a | awk \"/"${MACADDR}"/ { print $2 }\" | tr -d '()')"
     export SANS="${SITE_NAME}-harbor.kubernetes.${SITE_NAME}.labos.local"
     export CONFIG="$(yq '
       .spec.hosts[0].ssh.address = env(IPADDR) |
@@ -300,27 +419,30 @@ eof
       *)
         if [[ -n "${ARGS}" ]]; then
           echo "invalid arguments"
-          echo "use --harbor to cleanup harbor resources also"
-          echo "use --all to cleanup all resources"
+          print_options
           exit 1
         fi
         ;;
     esac
 
-    NAME="${SITE_NAME}-harbor"
-
     if [[ ${CLEAN_HARBOR} == true ]]; then
+      NAME="${SITE_NAME}-harbor"
       stat "${SITE_DIR}/kubeconfig-harbor.yaml" > /dev/null 2>&1 && k0sctl reset "${SITE_DIR}/kubeconfig-harbor.yaml" --config "${SITE_DIR}/bootstrap.yaml"
       sudo virsh list --all | grep "${NAME}" | awk '{print $2}' && sudo virsh reset "${NAME}"
     fi
 
     if [[ ${FULL_CLEANUP} == true ]]; then
-      if grep -q "${NAME}" <(sudo virsh list --all); then
-        sudo virsh destroy "${NAME}"
-        sudo virsh dumpxml "${NAME}" | yq -p xml '.domain.os.nvram.+content' | xargs sudo rm -f -
-        sudo virsh undefine --remove-all-storage "${NAME}"
-      fi
+      # remove site gw
+      NAME="${SITE_NAME}-gw"
+      delete_vm "${NAME}"
 
+      # remove site harbor
+      NAME="${SITE_NAME}-harbor"
+      delete_vm "${NAME}"
+
+      # todo: remove site vms
+
+      # remove site configs
       rm -rf "${SITE_DIR}"
     fi
 
