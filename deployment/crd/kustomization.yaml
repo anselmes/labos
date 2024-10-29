@@ -1,0 +1,4 @@
+resources:
+  - external-snapshotter
+  - gateway-api
+  - remoteclustertemplate.yaml

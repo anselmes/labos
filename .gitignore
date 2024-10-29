@@ -159,3 +159,4 @@ fabric.properties
 # Project files
 .cache
 .env
+.img

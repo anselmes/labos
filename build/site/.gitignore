@@ -1,0 +1,5 @@
+*/**
+!.pub
+!.sops.yaml
+!config.yaml
+!sync.yaml

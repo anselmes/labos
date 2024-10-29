@@ -1,0 +1,157 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: remoteclustertemplates.infrastructure.cluster.x-k8s.io
+  labels:
+    cluster.x-k8s.io/provider: infrastructure-k0sproject-k0smotron
+    cluster.x-k8s.io/v1beta1: v1beta1
+    clusterctl.cluster.x-k8s.io: ""
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: infrastructure.cluster.x-k8s.io
+  names:
+    plural: remoteclustertemplates
+    singular: remoteclustertemplate
+    kind: RemoteClusterTemplate
+    listKind: RemoteClusterTemplateList
+    categories:
+      - cluster-api
+  scope: Namespaced
+  versions:
+    - name: v1beta1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          description: >-
+            RemoteClusterTemplate is the Schema for the remoteclustertemplates
+            API.
+          type: object
+          properties:
+            apiVersion:
+              description: >-
+                APIVersion defines the versioned schema of this representation
+                of an object.
+
+                Servers should convert recognized schemas to the latest internal
+                value, and
+
+                may reject unrecognized values.
+
+                More info:
+                https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+              type: string
+            kind:
+              description: >-
+                Kind is a string value representing the REST resource this
+                object represents.
+
+                Servers may infer this from the endpoint the client submits
+                requests to.
+
+                Cannot be updated.
+
+                In CamelCase.
+
+                More info:
+                https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+              type: string
+            metadata:
+              type: object
+            spec:
+              description: >-
+                remoteClusterTemplateSpec defines the desired state of
+                RemoteClusterTemplate.
+              type: object
+              required:
+                - template
+              properties:
+                template:
+                  description: >-
+                    RemoteClusterTemplateResource describes the data needed to
+                    create a DockerCluster from a template.
+                  type: object
+                  required:
+                    - spec
+                  properties:
+                    metadata:
+                      description: >-
+                        Standard object's metadata.
+
+                        More info:
+                        https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata
+                      type: object
+                      properties:
+                        annotations:
+                          description: >-
+                            Annotations is an unstructured key value map stored
+                            with a resource that may be
+
+                            set by external tools to store and retrieve
+                            arbitrary metadata. They are not
+
+                            queryable and should be preserved when modifying
+                            objects.
+
+                            More info:
+                            http://kubernetes.io/docs/user-guide/annotations
+                          type: object
+                          additionalProperties:
+                            type: string
+                        labels:
+                          description: >-
+                            Map of string keys and values that can be used to
+                            organize and categorize
+
+                            (scope and select) objects. May match selectors of
+                            replication controllers
+
+                            and services.
+
+                            More info:
+                            http://kubernetes.io/docs/user-guide/labels
+                          type: object
+                          additionalProperties:
+                            type: string
+                    spec:
+                      description: >-
+                        DockerClusterSpec defines the desired state of
+                        DockerCluster.
+                      type: object
+                      properties:
+                        controlPlaneEndpoint:
+                          description: >-
+                            ControlPlaneEndpoint represents the endpoint used to
+                            communicate with the control plane.
+                          type: object
+                          required:
+                            - host
+                            - port
+                          properties:
+                            host:
+                              description: >-
+                                Host is the hostname on which the API server is
+                                serving.
+                              type: string
+                            port:
+                              description: >-
+                                Port is the port on which the API server is
+                                serving.
+
+                                Defaults to 6443 if not set.
+                              type: integer
+                    status:
+                      description: RemoteClusterStatus defines the observed state of RemoteCluster
+                      type: object
+                      required:
+                        - ready
+                      properties:
+                        ready:
+                          description: Ready denotes that the remote cluster is ready to be used.
+                          type: boolean
+                          default: false
+      subresources: {}
+  conversion:
+    strategy: None
