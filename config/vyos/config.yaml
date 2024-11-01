@@ -3,6 +3,7 @@ write_files:
   - path: /config/config.boot.default
     owner: root:vyattacfg
     permissions: "0644"
+    encoding: b64
     content: null
   - path: /usr/local/share/ca-certificates/ca.crt
     owner: root:vyattacfg

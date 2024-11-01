@@ -157,6 +157,11 @@ fabric.properties
 *.vsix
 
 # Project files
-.cache
-.env
-.img
+.cache/
+*.bin
+*.env
+*.fd
+*.img
+*.rom
+
+!example.env

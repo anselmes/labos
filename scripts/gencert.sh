@@ -1,79 +1,79 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0
 
+eval $(yq --output-format shell "${SITE_CONFIG}")
+
 generate_root_ca() {
-  CA_CERT_SUBJ="${1}"
-  CA_KEY_FILE="${2:-/tmp/ca.key}"
-  CA_CERT_FILE="${3:-/tmp/ca.crt}"
-  CA_CERT_PKCS12_FILE="${4:-/tmp/ca.pfx}"
-  CA_VALID_FOR="${5:-3065}"
-
-  [[ -z "${CA_CERT_SUBJ}" ]] && echo "ca certificate subject is required" && exit 1
-
+  stat "${spec_config_pki_ca_cert_file}" > /dev/null 2>&1 ||
   openssl req \
     -new \
     -x509 \
-    -days ${CA_VALID_FOR} \
+    -days ${spec_config_pki_ca_days} \
     -extensions v3_ca \
-    -keyout "${CA_KEY_FILE}" \
-    -out "${CA_CERT_FILE}" \
+    -keyout "${spec_config_pki_ca_key_file}" \
+    -out "${spec_config_pki_ca_cert_file}" \
     -passout pass: \
-    -subj "${CA_CERT_SUBJ}" \
+    -subj "${spec_config_pki_ca_subj}" \
 
+  stat "${config_pki_ca_bundle}" > /dev/null 2>&1 ||
   openssl pkcs12 \
     -export \
-    -in "${CA_CERT_FILE}" \
-    -inkey "${CA_KEY_FILE}" \
-    -out "${CA_CERT_PKCS12_FILE}" \
+    -in "${spec_config_pki_ca_cert_file}" \
+    -inkey "${spec_config_pki_ca_key_file}" \
+    -out "${spec_config_pki_ca_bundle}" \
     -passin pass: \
     -passout pass:
 }
 
 generate_intermediate_ca() {
-  CA_CERT_FILE="${1}"
-  CA_KEY_FILE="${2}"
-  INTERMEDIATE_CERT_SUBJ="${3}"
-  INTERMEDIATE_CA_KEY_FILE="${4:-/tmp/ca.key}"
-  INTERMEDIATE_CA_FILE="${5:-/tmp/ca.crt}"
-  INTERMEDIATE_CERT_PKCS12_FILE="${6:-/tmp/ca.pfx}"
-  INTERMEDIATE_CA_VALID_FOR="${7:-365}"
+  INTERMEDIATE_CERT_SUBJ="${1}"
+  INTERMEDIATE_CA_VALID_FOR="${2}"
+  INTERMEDIATE_KEY_FILE="${3}"
+  INTERMEDIATE_CA_FILE="${4}"
+  INTERMEDIATE_CA_BUNDLE_FILE="${5}"
 
-  [[ -z "${CA_CERT_FILE}" ]] && echo "ca certificate file is required" && exit 1
-  [[ -z "${CA_KEY_FILE}" ]] && echo "ca key file is required" && exit 1
-  [[ -z "${INTERMEDIATE_CERT_SUBJ}" ]] && echo "intermediate certificate subject is required" && exit 1
+  [[ -z "${INTERMEDIATE_CERT_SUBJ}" ]] && echo "missing intermediate subject" && exit 1
+  [[ -z "${INTERMEDIATE_CA_VALID_FOR}" ]] && echo "missing intermediate valid for" && exit 1
+  [[ -z "${INTERMEDIATE_KEY_FILE}" ]] && echo "missing intermediate key file" && exit 1
+  [[ -z "${INTERMEDIATE_CA_FILE}" ]] && echo "missing intermediate ca file" && exit 1
+  [[ -z "${INTERMEDIATE_CA_BUNDLE_FILE}" ]] && echo "missing intermediate ca bundle file" && exit 1
 
   OUT_DIR="$(dirname ${INTERMEDIATE_CA_FILE})"
 
-  openssl genrsa -out "${INTERMEDIATE_CA_KEY_FILE}"
+  stat "${INTERMEDIATE_CA_FILE}" > /dev/null 2>&1 ||
+  openssl genrsa -out "${INTERMEDIATE_KEY_FILE}"
 
-  openssl req \
-    -new \
-    -key "${INTERMEDIATE_CA_KEY_FILE}" \
-    -out /tmp/intermediate-ca.csr \
-    -subj "${INTERMEDIATE_CERT_SUBJ}"
+  if ! stat "${INTERMEDIATE_CA_FILE}" > /dev/null 2>&1; then
+    openssl req \
+      -new \
+      -key "${INTERMEDIATE_KEY_FILE}" \
+      -out /tmp/intermediate-ca.csr \
+      -subj "${INTERMEDIATE_CERT_SUBJ}"
 
-  cd "${OUT_DIR}"
-  openssl ca \
-    -batch \
-    -notext \
-    -create_serial \
-    -cert "${CA_CERT_FILE}" \
-    -days ${INTERMEDIATE_CA_VALID_FOR} \
-    -extensions v3_ca \
-    -in /tmp/intermediate-ca.csr \
-    -keyfile "${CA_KEY_FILE}" \
-    -out "${INTERMEDIATE_CA_FILE}" \
-    -outdir "${OUT_DIR}" \
-    -passin pass: \
-    -policy policy_anything \
-    -subj "${INTERMEDIATE_CERT_SUBJ}"
-  cd -
+    cd "${OUT_DIR}"
+    openssl ca \
+      -batch \
+      -notext \
+      -create_serial \
+      -cert "${spec_config_pki_ca_cert_file}" \
+      -days ${INTERMEDIATE_CA_VALID_FOR} \
+      -extensions v3_ca \
+      -in /tmp/intermediate-ca.csr \
+      -keyfile "${spec_config_pki_ca_key_file}" \
+      -out "${INTERMEDIATE_CA_FILE}" \
+      -outdir . \
+      -passin pass: \
+      -policy policy_anything \
+      -subj "${INTERMEDIATE_CERT_SUBJ}"
+    cd -
+  fi
 
+  stat "${INTERMEDIATE_CA_BUNDLE_FILE}" > /dev/null 2>&1 ||
   openssl pkcs12 \
     -export \
     -in "${INTERMEDIATE_CA_FILE}" \
-    -inkey "${INTERMEDIATE_CA_KEY_FILE}" \
-    -out "${INTERMEDIATE_CERT_PKCS12_FILE}" \
+    -inkey "${INTERMEDIATE_KEY_FILE}" \
+    -out "${INTERMEDIATE_CA_BUNDLE_FILE}" \
     -passout pass:
 
   rm -f /tmp/intermediate-ca.csr
@@ -81,22 +81,21 @@ generate_intermediate_ca() {
 
 case "${1}" in
   --root-ca)
-    generate_root_ca "${@:2}"
+    generate_root_ca
     ;;
   --intermediate-ca)
-    generate_intermediate_ca "${@:2}"
+    generate_intermediate_ca "${2}" "${3}" "${4}" "${5}" "${6}"
     ;;
   *)
     echo """
 Usage: ${0} [OPTIONS]
 
 OPTIONS:
-  --root-ca <ca-subject> [ca-key-file] [ca-cert-file] [ca-pkcs12-file] [valid-for]
-  --intermediate-ca <ca-cert-file> <ca-key-file> <intermediate-subject> [intermediate-ca-key-file] [intermediate-ca-file] [intermediate-ca-pkcs12-file] [valid-for]
+  --root-ca
+  --intermediate-ca <subject> <days> <key-file> <ca-file> <bundle-file>
 
 EXAMPLES:
-  ${0} --root-ca '/C=US/ST=CA/O=Example/CN=Root CA' /tmp/ca.key /tmp/ca.crt /tmp/ca.pfx 3650
-  ${0} --intermediate-ca /tmp/ca.crt /tmp/ca.key '/C=US/ST=CA/O=Example/CN=Intermediate CA' /tmp/ca.key /tmp/ca.crt /tmp/ca.pfx 365
+  ${0} --intermediate-ca '/C=CA/ST=Ontario/L=Toronto/O=LabOS/OU=LabOS/CN=LabOS Intermediate CA' 365 'ca.key' 'ca.crt' 'ca.pfx'
 """
     exit 1
     ;;

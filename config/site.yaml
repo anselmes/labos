@@ -1,0 +1,115 @@
+---
+spec:
+  domain: ${SITE_DOMAIN_NAME:-labos.local}
+  config:
+    ssh:
+      key:
+        file: ${SITE_DIR:-/tmp/$SITE_NAME:-skiff}/id_ed25519
+    gpg:
+      dir: ${SITE_DIR:-/tmp/$SITE_NAME:-skiff}/.gnupg
+    pki:
+      dir: ${SITE_DIR:-/tmp/$SITE_NAME:-skiff}/pki
+      ca:
+        bundle: ${SITE_DIR:-/tmp/$SITE_NAME:-skiff}/ca.pfx
+        days: ${ROOT_CA_VALID_FOR:-3065}
+        subj: /CN=${SITE_NAME:-skiff}-root-ca
+        key:
+          file: ${SITE_DIR:-/tmp/$SITE_NAME:-skiff}/pki/ca.key
+        cert:
+          file: ${SITE_DIR:-/tmp/$SITE_NAME:-skiff}/pki/ca.crt
+  service:
+    knative:
+      enabled: false
+    ntp:
+      enabled: true
+      timezone: America/Toronto
+      servers:
+        - 1.ca.pool.ntp.org
+        - 2.ca.pool.ntp.org
+    dns:
+      enabled: true
+      nameservers:
+        - 1.1.1.1
+        - 9.9.9.9
+    bgp:
+      enabled: true
+      cilium:
+        password: ${BGP_CILIUM_PWD:-changeme}
+    libvirt:
+      enabled: true
+      arch: ${LIBVIRT_ARCH:-aarch64}
+      emulator: ${LIBVIRT_EMULATOR:-/opt/homebrew/bin/qemu-system-aarch64}
+      firmware: ${LIBVIRT_FIRMWARE:-/opt/homebrew/share/qemu/edk2-aarch64-code.fd}
+      type: ${LIBVIRT_TYPE:-qemu}
+  cluster:
+    harbor:
+      - name: ${SITE_HARBOR_NAME:-${SITE_NAME:-skiff}-harbor}-0
+        enabled: true
+    carrier:
+      - name: ${SITE_CARRIER_NAME:-${SITE_NAME:-skiff}-carrier}-0
+        harbor: ${SITE_HARBOR_NAME:-${SITE_NAME:-skiff}-harbor}-0
+        enabled: true
+    cruiser:
+      - name: ${SITE_CRUISER_NAME:-${SITE_NAME:-skiff}-cruiser}-0
+        harbor: ${SITE_HARBOR_NAME:-${SITE_NAME:-skiff}-harbor}-0
+        cruiser: ${SITE_CRUISER_NAME:-${SITE_NAME:-skiff}-cruiser}-0
+        enabled: true
+    bootstrap:
+      cni:
+        file: ${LABOS_DIR}/config/bootstrap/charts/cni.yaml
+      csi:
+        file: ${LABOS_DIR}/config/bootstrap/charts/csi.yaml
+      capi:
+        file: ${LABOS_DIR}/config/bootstrap/charts/capi.yaml
+      sans:
+        - kubernetes.${SITE_NAME:-skiff}.${SITE_DOMAIN_NAME:-labos.local}
+      cluster:
+        file: ${SITE_DIR:-/tmp/$SITE_NAME:-skiff}/bootstrap.yaml
+        config:
+          file: ${LABOS_DIR}/config/bootstrap/config.yaml
+  provider:
+    vyos:
+      enabled: true
+      as: ${VYOS_AS:-65000}
+      hostname: ${VYOS_HOSTNAME:-gw}
+      user:
+        name: ${VYOS_USER_NAME:-vyos}
+      ca:
+        bundle: ${SITE_DIR:-/tmp/$SITE_NAME:-skiff}/vyos/ca.pfx
+        days: ${VYOS_CA_VALID_FOR:-365}
+        subj: /CN=${SITE_NAME:-skiff}-vyos-ca
+        key:
+          file: ${SITE_DIR:-/tmp/$SITE_NAME:-skiff}/pki/vyos-ca.key
+        cert:
+          file: ${SITE_DIR:-/tmp/$SITE_NAME:-skiff}/pki/vyos-ca.crt
+      networks:
+        interfaces:
+          - name: oam
+            address:
+              mac: ${VYOS_OAM_MACADDR:-de:ad:be:ef:00:00}
+              ipv4:
+                cidr: ${VYOS_OAM_IPV4_CIDR:-172.16.254.1/24}
+              ipv6:
+                cidr: ${VYOS_OAM_IPV6_CIDR:-fd00::1/64}
+          - name: svc
+            address:
+              mac: ${VYOS_SVC_MACADDR:-de:ad:be:ef:00:01}
+              ipv4:
+                cidr: ${VYOS_SVC_IPV4_CIDR:-172.16.254.1/24}
+              ipv6:
+                cidr: ${VYOS_SVC_IPV6_CIDR:-fd00::1/64}
+          - name: wan
+            address:
+              mac: ${VYOS_WAN_MACADDR:-de:ad:be:ef:00:02}
+              ipv4:
+                cidr: ${VYOS_WAN_IPV4_CIDR:-dhcp}
+              ipv6:
+                cidr: ${VYOS_WAN_IPV6_CIDR:-dhcpv6}
+          - name: lan
+            address:
+              mac: ${VYOS_LAN_MACADDR:-de:ad:be:ef:00:03}
+              ipv4:
+                cidr: ${VYOS_LAN_IPV4_CIDR:-dhcp}
+              ipv6:
+                cidr: ${VYOS_LAN_IPV6_CIDR:-dhcpv6}
+status: {}

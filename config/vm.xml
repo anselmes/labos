@@ -1,0 +1,41 @@
+<domain xmlns:qemu="http://libvirt.org/schemas/domain/qemu/1.0" type="${service_libvirt_type}">
+  <memory unit="KiB">2097152</memory>
+  <vcpu placement="static">2</vcpu>
+  <os>
+    <type arch="${service_libvirt_arch}" machine="virt-9.1">hvm</type>
+    <boot dev="hd"/>
+    <bootmenu enable="yes"/>
+  </os>
+  <features>
+    <gic version="3"/>
+  </features>
+  <devices>
+    <emulator>${service_libvirt_emulator}</emulator>
+    <console type="pty"/>
+    <memballoon model="virtio"/>
+    <rng model="virtio"/>
+    <serial type="pty"/>
+    <disk device="cdrom">
+      <driver name="qemu" type="raw"/>
+      <target bus="sata"/>
+      <readonly/>
+    </disk>
+    <channel type="unix">
+      <target type="virtio" name="org.qemu.guest_agent.0"/>
+    </channel>
+    <channel type="unix">
+      <target type="virtio" name="org.libguestfs.channel.0"/>
+    </channel>
+    <tpm model="tpm-tis">
+      <backend type="emulator" version="2.0"/>
+    </tpm>
+  </devices>
+  <qemu:commandline>
+    <qemu:arg value="-drive"/>
+    <qemu:arg value="id=hd0,if=pflash,readonly=on,format=raw,file=${service_libvirt_firmware}"/>
+    <qemu:arg value="-netdev"/>
+    <qemu:arg value="vmnet-shared,id=oam"/>
+    <qemu:arg value="-device"/>
+    <qemu:arg value="virtio-net-pci,id=net1,netdev=oam,addr=0x4,mac=${vm_oam_macaddress}"/>
+  </qemu:commandline>
+</domain>

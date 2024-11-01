@@ -1,72 +1,146 @@
 interfaces {
-    ethernet eth0 {
-        description wan
-    }
-    loopback lo {
-        address ${VYOS_OAM_IPV4_CIDR:-172.16.254.1/24}
-        address ${VYOS_OAM_IPV6_CIDR:-fd00::1/64}
-        description oam
-    }
+  ethernet eth0 {
+    address ${provider_vyos_interfaces_2_address_ipv4_cidr}
+    address ${provider_vyos_interfaces_2_address_ipv6_cidr}
+    description wan
+  }
+  ethernet eth1 {
+    address ${provider_vyos_interfaces_3_address_ipv4_cidr}
+    address ${provider_vyos_interfaces_3_address_ipv6_cidr}
+    description lan
+  }
+  loopback svc {
+    address ${provider_vyos_interfaces_1_address_ipv4_cidr}
+    address ${provider_vyos_interfaces_1_address_ipv6_cidr}
+    description services
+  }
+  loopback lo {
+    address ${provider_vyos_interfaces_0_address_ipv4_cidr}
+    address ${provider_vyos_interfaces_0_address_ipv6_cidr}
+    description oam
+  }
 }
 nat {
-    source {
-        rule 100 {
-            outbound-interface eth0
-            translation {
-                address masquerade
-            }
-        }
+  source {
+    rule 100 {
+      outbound-interface eth0
+      translation {
+        address masquerade
+      }
     }
+  }
 }
 pki {
-    ca vyos {
-        certificate ${VYOS_CA}
-        private {
-          key ${VYOS_CA_KEY}
-        }
+  ca vyos {
+    certificate ${provider_vyos_ca_cert_content}
+    private {
+      key ${provider_vyos_ca_key_content}
     }
+  }
 }
 protocols {
-    static {
-        route 0.0.0.0/0 {
-            dhcp-interface eth0
+  bgp {
+    address-family {
+      ipv4-unicast {
+          redistribute {
+            connected {
+            }
+          }
+      }
+    }
+    peer-group cilium {
+        address-family {
+          ipv4-unicast {
+          }
+        }
+        ebgp-multihop 4
+        graceful-restart enable
+        password ${service_bgp_cilium_password}
+        remote-as external
+    }
+    parameters {
+        bestpath {
+          as-path {
+            multipath-relax
+          }
         }
     }
+    system-as ${provider_vyos_as}
+    timers {
+      holdtime 9
+      keepalive 3
+    }
+  }
+  static {
+    route 0.0.0.0/0 {
+      dhcp-interface eth0
+    }
+  }
 }
 service {
-    https {
-        certificate {
-            ca-certificate vyos
-            certificate vyos-api
-        }
-        virtual-host lan {
-            allow-client {
-                address 0.0.0.0/0
-                address ::/0
-            }
-            listen-address ${VYOS_OAM_IPV4_ADDR:-172.16.254.1}
-            listen-address ${VYOS_OAM_IPV6_ADDR:-fd00::1}
-        }
+  dns {
+    forwarding {
+      allow-from 0.0.0.0/0
+      allow-from ::/0
+      authoritative-domain ${domain} {
+      }
+      listen-address ${provider_vyos_interfaces_1_address_ipv4_addr}
+      listen-address ${provider_vyos_interfaces_1_address_ipv6_addr}
+      name-server ${service_dns_nameservers_0} {
+      }
+      name-server ${service_dns_nameservers_1} {
+      }
     }
-    lldp {
-        interface all {
-        }
+  }
+  https {
+    certificate {
+      ca-certificate vyos
+      certificate vyos-api
     }
-    ssh {
-        access-control {
-            allow {
-                user ${VYOS_USERNAME:-vyos}
-            }
-        }
-        disable-password-authentication
-        port 22
+    virtual-host lan {
+      allow-client {
+        address 0.0.0.0/0
+        address ::/0
+      }
+      listen-address ${provider_vyos_interfaces_1_address_ipv4_addr}
+      listen-address ${provider_vyos_interfaces_1_address_ipv6_addr}
     }
+  }
+  lldp {
+    interface all {
+    }
+  }
+  ntp {
+    allow-client {
+      address 0.0.0.0/0
+      address ::/0
+    }
+    listen-address ${provider_vyos_interfaces_1_address_ipv4_addr}
+    listen-address ${provider_vyos_interfaces_1_address_ipv6_addr}
+    server ${service_ntp_servers_0} {
+    }
+    server ${service_ntp_servers_1} {
+    }
+  }
+  ssh {
+    access-control {
+      allow {
+        user ${provider_vyos_user_name}
+      }
+    }
+    listen-address ${provider_vyos_interfaces_0_address_ipv4_addr}
+    listen-address ${provider_vyos_interfaces_0_address_ipv6_addr}
+    disable-password-authentication
+    port 22
+  }
 }
 system {
-    domain-name ${SITE_DOMAIN_NAME:-labos.local}
-    domain-search {
-        domain ${SITE_DOMAIN_NAME:-labos.local}
-    }
-    host-name ${VYOS_HOSTNAME:-gw}
-    time-zone America/Toronto
+  domain-name ${domain}
+  domain-search {
+    domain ${domain}
+  }
+  host-name ${provider_vyos_hostname}
+  name-server ${provider_vyos_interfaces_1_address_ipv4_addr}
+  name-server ${provider_vyos_interfaces_1_address_ipv6_addr}
+  time-zone ${service_ntp_timezone}
 }
