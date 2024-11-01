@@ -1,7 +1,7 @@
 {
   "name": "labOS",
   "dockerComposeFile": ["${localWorkspaceFolder}/compose-dev.yaml"],
-  "service": "devos",
+  "service": "labos",
   "workspaceFolder": "/home/labos/workspace",
   "postCreateCommand": "${containerWorkspaceFolder}/scripts/config-devos.sh",
   "remoteUser": "devos"
